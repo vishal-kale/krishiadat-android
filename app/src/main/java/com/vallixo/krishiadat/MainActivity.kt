@@ -3,9 +3,6 @@ package com.vallixo.krishiadat
 import android.annotation.SuppressLint
 import android.net.Uri
 import android.os.Bundle
-import android.os.Message
-import android.webkit.ConsoleMessage
-import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -14,6 +11,9 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -27,13 +27,23 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Let the app draw full-screen but then apply insets so content
+        // never hides behind the status bar, notch, or navigation bar.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
         webView = WebView(this)
         setContentView(webView)
+
+        // Push WebView content down/up to respect status bar + nav bar
+        ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
 
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
-            databaseEnabled = true
             loadWithOverviewMode = true
             useWideViewPort = true
             setSupportZoom(false)
@@ -47,18 +57,6 @@ class MainActivity : AppCompatActivity() {
             userAgentString = userAgentString.replace("; wv", "")
         }
 
-        // Keep all navigation (login redirects, locale switches) inside the WebView
-        webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(
-                view: WebView,
-                request: WebResourceRequest,
-            ): Boolean {
-                view.loadUrl(request.url.toString())
-                return true
-            }
-        }
-
-        // Allow camera access (used for farmer photo capture)
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 view.loadUrl(request.url.toString())
@@ -67,12 +65,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webChromeClient = object : WebChromeClient() {
-            // Grant camera permission when the web page requests it
             override fun onPermissionRequest(request: PermissionRequest) {
                 request.grant(request.resources)
             }
 
-            // Allow file picker for image uploads
             override fun onShowFileChooser(
                 webView: WebView,
                 filePathCallback: ValueCallback<Array<Uri>>,
