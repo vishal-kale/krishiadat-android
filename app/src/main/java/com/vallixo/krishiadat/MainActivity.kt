@@ -2,10 +2,12 @@ package com.vallixo.krishiadat
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.print.PrintAttributes
 import android.print.PrintManager
+import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
@@ -16,8 +18,10 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -27,9 +31,8 @@ class MainActivity : AppCompatActivity() {
         private const val APP_URL = "https://krishiadat-web.vercel.app"
     }
 
-    // ── JavaScript bridge ───────────────────────────────────────────────────────
-    // Exposed to the web page as window.AndroidPrintBridge.
-    // Called by billPrint.ts when running inside this WebView.
+    // ── JavaScript bridges ──────────────────────────────────────────────────────
+
     inner class AndroidPrintBridge {
         @JavascriptInterface
         fun print(html: String) {
@@ -55,6 +58,34 @@ class MainActivity : AppCompatActivity() {
                             .build()
                         printManager.print("KrishiAdat Bill", adapter, attrs)
                     }
+                }
+            }
+        }
+    }
+
+    inner class AndroidShareBridge {
+        @JavascriptInterface
+        fun shareImage(base64Png: String, filename: String, title: String) {
+            runOnUiThread {
+                try {
+                    val bytes = Base64.decode(base64Png, Base64.DEFAULT)
+                    val dir = File(cacheDir, "shared_images").also { it.mkdirs() }
+                    val file = File(dir, filename)
+                    file.writeBytes(bytes)
+                    val uri = FileProvider.getUriForFile(
+                        this@MainActivity,
+                        "${packageName}.fileprovider",
+                        file,
+                    )
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "image/png"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra(Intent.EXTRA_SUBJECT, title)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivity(Intent.createChooser(intent, title))
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
             }
         }
@@ -97,8 +128,8 @@ class MainActivity : AppCompatActivity() {
             userAgentString = userAgentString.replace("; wv", "")
         }
 
-        // Expose print bridge to the web page
         webView.addJavascriptInterface(AndroidPrintBridge(), "AndroidPrintBridge")
+        webView.addJavascriptInterface(AndroidShareBridge(), "AndroidShareBridge")
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
