@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">KrishiAdat</string>
+    <string name="app_tagline">Agricultural Commission Management</string>
+    <string name="offline_title">No Internet Connection</string>
+    <string name="offline_subtitle">KrishiAdat needs internet to work.\nPlease check your connection and try again.</string>
+    <string name="try_again">Try Again</string>
+    <string name="press_back_to_exit">Press back again to exit</string>
+    <string name="still_offline">Still no internet. Please check your connection.</string>
 </resources>
