@@ -8,6 +8,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.print.PrintAttributes
 import android.print.PrintManager
@@ -26,10 +27,20 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.appupdate.AppUpdateOptions
+import com.google.android.play.core.install.InstallStateUpdatedListener
+import com.google.android.play.core.install.model.AppUpdateType
+import com.google.android.play.core.install.model.InstallStatus
+import com.google.android.play.core.install.model.UpdateAvailability
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
@@ -37,12 +48,34 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var loadingView: LinearLayout
     private lateinit var offlineView: LinearLayout
+    private lateinit var lockView: LinearLayout
 
     private var backPressedTime = 0L
-    private val BACK_PRESS_INTERVAL = 2000L
+    private var pendingDeepPath: String? = null
+
+    // ── App Update ─────────────────────────────────────────────────────────────
+
+    private val appUpdateManager by lazy { AppUpdateManagerFactory.create(this) }
+
+    private val updateResultLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { /* user can dismiss — flexible update continues in background */ }
+
+    private val installStateListener = InstallStateUpdatedListener { state ->
+        if (state.installStatus() == InstallStatus.DOWNLOADED) {
+            runOnUiThread { notifyUpdateDownloaded() }
+        }
+    }
 
     companion object {
         private const val APP_URL = "https://krishiadat-web.vercel.app"
+        private const val ACTION_NEW_BILL = "com.vallixo.krishiadat.ACTION_NEW_BILL"
+        private const val ACTION_NEW_CREDIT = "com.vallixo.krishiadat.ACTION_NEW_CREDIT"
+        private const val BACK_PRESS_INTERVAL = 2000L
+
+        // Survives rotation; resets when process is killed — re-auth on cold launch
+        var isSessionAuthenticated = false
+        var userHasLoggedIn = false
     }
 
     // ── Connectivity ────────────────────────────────────────────────────────────
@@ -75,9 +108,10 @@ class MainActivity : AppCompatActivity() {
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
-    private fun loadApp() {
-        if (webView.url.isNullOrEmpty()) {
-            webView.loadUrl(APP_URL)
+    private fun loadApp(path: String? = null) {
+        val url = if (path != null) "$APP_URL$path" else APP_URL
+        if (webView.url.isNullOrEmpty() || path != null) {
+            webView.loadUrl(url)
         } else {
             webView.reload()
         }
@@ -151,6 +185,7 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         loadingView = findViewById(R.id.loadingView)
         offlineView = findViewById(R.id.offlineView)
+        lockView = findViewById(R.id.lockView)
 
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.container)) { view, windowInsets ->
             val bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -170,20 +205,50 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        findViewById<Button>(R.id.authenticateButton).setOnClickListener {
+            showBiometricPrompt()
+        }
+
         val networkRequest = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
         connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
 
-        if (savedInstanceState != null) {
-            webView.restoreState(savedInstanceState)
-            showWebView()
-        } else if (isOnline()) {
-            showLoading()
-            webView.loadUrl(APP_URL)
+        // Capture shortcut deep-link; applied after auth succeeds
+        pendingDeepPath = resolveShortcutPath(intent)
+
+        if (isSessionAuthenticated) {
+            onAuthSuccess(savedInstanceState)
         } else {
-            showOffline()
+            authenticate(savedInstanceState)
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val path = resolveShortcutPath(intent) ?: return
+        if (isSessionAuthenticated) {
+            navigateTo(path)
+        } else {
+            pendingDeepPath = path
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        appUpdateManager.registerListener(installStateListener)
+        // Show banner if update finished downloading while app was in background
+        appUpdateManager.appUpdateInfo.addOnSuccessListener { info ->
+            if (info.installStatus() == InstallStatus.DOWNLOADED) {
+                notifyUpdateDownloaded()
+            }
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        appUpdateManager.unregisterListener(installStateListener)
     }
 
     override fun onDestroy() {
@@ -194,6 +259,110 @@ class MainActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         webView.saveState(outState)
+    }
+
+    // ── Biometric Auth ─────────────────────────────────────────────────────────
+
+    private fun authenticate(savedInstanceState: Bundle?) {
+        val authenticators = BiometricManager.Authenticators.BIOMETRIC_WEAK or
+            BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        val canAuth = BiometricManager.from(this).canAuthenticate(authenticators)
+        if (canAuth == BiometricManager.BIOMETRIC_SUCCESS) {
+            showLock()
+            showBiometricPrompt()
+        } else {
+            // No screen lock set up — proceed without auth
+            onAuthSuccess(savedInstanceState)
+        }
+    }
+
+    private fun showBiometricPrompt() {
+        val authenticators = BiometricManager.Authenticators.BIOMETRIC_WEAK or
+            BiometricManager.Authenticators.DEVICE_CREDENTIAL
+
+        val promptInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle(getString(R.string.app_name))
+                .setSubtitle(getString(R.string.biometric_subtitle))
+                .setAllowedAuthenticators(authenticators)
+                .build()
+        } else {
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle(getString(R.string.app_name))
+                .setSubtitle(getString(R.string.biometric_subtitle))
+                .setNegativeButtonText(getString(R.string.biometric_cancel))
+                .build()
+        }
+
+        BiometricPrompt(
+            this,
+            ContextCompat.getMainExecutor(this),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    isSessionAuthenticated = true
+                    onAuthSuccess(null)
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    // User dismissed — keep lock screen so they can retry via button
+                    showLock()
+                }
+
+                override fun onAuthenticationFailed() {
+                    // Wrong biometric — system handles retries automatically
+                }
+            },
+        ).authenticate(promptInfo)
+    }
+
+    private fun onAuthSuccess(savedInstanceState: Bundle?) {
+        isSessionAuthenticated = true
+        checkForUpdate()
+
+        if (savedInstanceState != null) {
+            webView.restoreState(savedInstanceState)
+            showWebView()
+        } else if (isOnline()) {
+            showLoading()
+            val path = pendingDeepPath.also { pendingDeepPath = null }
+            loadApp(path)
+        } else {
+            showOffline()
+        }
+    }
+
+    // ── App Shortcuts ──────────────────────────────────────────────────────────
+
+    private fun resolveShortcutPath(intent: Intent?): String? = when (intent?.action) {
+        ACTION_NEW_BILL -> "/en/purchases/new"
+        ACTION_NEW_CREDIT -> "/en/credits/new"
+        else -> null
+    }
+
+    private fun navigateTo(path: String) {
+        webView.loadUrl("$APP_URL$path")
+        showWebView()
+    }
+
+    // ── App Update ─────────────────────────────────────────────────────────────
+
+    private fun checkForUpdate() {
+        appUpdateManager.appUpdateInfo
+            .addOnSuccessListener { info ->
+                if (info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE &&
+                    info.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE)
+                ) {
+                    appUpdateManager.startUpdateFlowForResult(
+                        info,
+                        updateResultLauncher,
+                        AppUpdateOptions.newBuilder(AppUpdateType.FLEXIBLE).build(),
+                    )
+                }
+            }
+    }
+
+    private fun notifyUpdateDownloaded() {
+        Toast.makeText(this, R.string.update_downloaded, Toast.LENGTH_LONG).show()
     }
 
     // ── WebView Setup ──────────────────────────────────────────────────────────
@@ -225,9 +394,20 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
 
+            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                // Session timeout: detect redirect to /login after the user was on a dashboard page
+                val isLoginPage = url.contains("/login")
+                if (isLoginPage && userHasLoggedIn) {
+                    Toast.makeText(this@MainActivity, R.string.session_expired, Toast.LENGTH_LONG).show()
+                    userHasLoggedIn = false
+                } else if (!isLoginPage) {
+                    userHasLoggedIn = true
+                }
+            }
+
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
-                // Only reveal the WebView if we aren't showing the offline screen
                 if (offlineView.visibility != View.VISIBLE) {
                     showWebView()
                 }
@@ -267,6 +447,8 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
+                    // Never allow back to bypass the lock screen
+                    lockView.visibility == View.VISIBLE -> Unit
                     webView.canGoBack() -> webView.goBack()
                     System.currentTimeMillis() - backPressedTime < BACK_PRESS_INTERVAL -> {
                         isEnabled = false
@@ -285,17 +467,19 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // ── UI State ───────────────────────────────────────────────────────────────
+    // ── UI States ──────────────────────────────────────────────────────────────
 
     private fun showLoading() {
         loadingView.visibility = View.VISIBLE
         offlineView.visibility = View.GONE
+        lockView.visibility = View.GONE
         webView.visibility = View.INVISIBLE
     }
 
     private fun showOffline() {
         offlineView.visibility = View.VISIBLE
         loadingView.visibility = View.GONE
+        lockView.visibility = View.GONE
         webView.visibility = View.INVISIBLE
     }
 
@@ -303,5 +487,13 @@ class MainActivity : AppCompatActivity() {
         webView.visibility = View.VISIBLE
         loadingView.visibility = View.GONE
         offlineView.visibility = View.GONE
+        lockView.visibility = View.GONE
+    }
+
+    private fun showLock() {
+        lockView.visibility = View.VISIBLE
+        loadingView.visibility = View.GONE
+        offlineView.visibility = View.GONE
+        webView.visibility = View.INVISIBLE
     }
 }

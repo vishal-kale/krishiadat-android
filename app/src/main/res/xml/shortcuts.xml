@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:shortcutId="new_purchase_bill"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_bill"
+        android:shortcutShortLabel="@string/shortcut_bill_short"
+        android:shortcutLongLabel="@string/shortcut_bill_long">
+        <intent
+            android:action="com.vallixo.krishiadat.ACTION_NEW_BILL"
+            android:targetPackage="com.vallixo.krishiadat"
+            android:targetClass="com.vallixo.krishiadat.MainActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="new_credit"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_credit"
+        android:shortcutShortLabel="@string/shortcut_credit_short"
+        android:shortcutLongLabel="@string/shortcut_credit_long">
+        <intent
+            android:action="com.vallixo.krishiadat.ACTION_NEW_CREDIT"
+            android:targetPackage="com.vallixo.krishiadat"
+            android:targetClass="com.vallixo.krishiadat.MainActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+</shortcuts>

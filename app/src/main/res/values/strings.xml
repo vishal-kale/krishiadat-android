@@ -7,4 +7,22 @@
     <string name="try_again">Try Again</string>
     <string name="press_back_to_exit">Press back again to exit</string>
     <string name="still_offline">Still no internet. Please check your connection.</string>
+
+    <!-- Biometric lock -->
+    <string name="biometric_subtitle">Verify your identity to continue</string>
+    <string name="biometric_hint">Use fingerprint, face, or device PIN to access KrishiAdat</string>
+    <string name="biometric_cancel">Cancel</string>
+    <string name="authenticate">Authenticate</string>
+
+    <!-- Session timeout -->
+    <string name="session_expired">Your session has expired. Please log in again.</string>
+
+    <!-- App shortcuts -->
+    <string name="shortcut_bill_short">New Bill</string>
+    <string name="shortcut_bill_long">New Purchase Bill</string>
+    <string name="shortcut_credit_short">New Credit</string>
+    <string name="shortcut_credit_long">New Credit Entry</string>
+
+    <!-- In-app update -->
+    <string name="update_downloaded">Update downloaded. Restart the app to apply it.</string>
 </resources>
