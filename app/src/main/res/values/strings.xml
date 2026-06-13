@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">KrishiAdat</string>
-    <string name="app_tagline">Agricultural Commission Management</string>
+    <string name="app_tagline">Trusted by farmers. Built for adat.</string>
     <string name="offline_title">No Internet Connection</string>
     <string name="offline_subtitle">KrishiAdat needs internet to work.\nPlease check your connection and try again.</string>
     <string name="try_again">Try Again</string>
