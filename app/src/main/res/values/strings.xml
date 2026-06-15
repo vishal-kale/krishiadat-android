@@ -25,4 +25,8 @@
 
     <!-- In-app update -->
     <string name="update_downloaded">Update downloaded. Restart the app to apply it.</string>
+
+    <!-- Camera / file chooser -->
+    <string name="camera_permission_denied">Camera permission is required to take photos. Please grant it in Settings.</string>
+    <string name="select_image">Select Image</string>
 </resources>

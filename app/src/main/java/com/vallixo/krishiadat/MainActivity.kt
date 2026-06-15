@@ -1,8 +1,10 @@
 package com.vallixo.krishiadat
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -12,6 +14,7 @@ import android.os.Build
 import android.os.Bundle
 import android.print.PrintAttributes
 import android.print.PrintManager
+import android.provider.MediaStore
 import android.util.Base64
 import android.view.View
 import android.webkit.JavascriptInterface
@@ -52,6 +55,38 @@ class MainActivity : AppCompatActivity() {
 
     private var backPressedTime = 0L
     private var pendingDeepPath: String? = null
+
+    // ── Camera / File Chooser ──────────────────────────────────────────────────
+
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private var cameraPhotoUri: Uri? = null
+
+    private val requestCameraPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            launchCameraCapture()
+        } else {
+            Toast.makeText(this, R.string.camera_permission_denied, Toast.LENGTH_SHORT).show()
+            filePathCallback?.onReceiveValue(null)
+            filePathCallback = null
+        }
+    }
+
+    private val fileChooserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val cb = filePathCallback ?: return@registerForActivityResult
+        filePathCallback = null
+        if (result.resultCode == RESULT_OK) {
+            // Gallery selection returns data.data; camera (with EXTRA_OUTPUT) returns null data
+            val uri = result.data?.data ?: cameraPhotoUri
+            cb.onReceiveValue(if (uri != null) arrayOf(uri) else null)
+        } else {
+            cb.onReceiveValue(null)
+        }
+        cameraPhotoUri = null
+    }
 
     // ── App Update ─────────────────────────────────────────────────────────────
 
@@ -365,6 +400,43 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, R.string.update_downloaded, Toast.LENGTH_LONG).show()
     }
 
+    // ── Camera helpers ─────────────────────────────────────────────────────────
+
+    private fun launchCameraCapture() {
+        try {
+            val dir = File(cacheDir, "camera_photos").also { it.mkdirs() }
+            val file = File.createTempFile("photo_", ".jpg", dir)
+            val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
+            cameraPhotoUri = uri
+            fileChooserLauncher.launch(
+                Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT, uri)
+            )
+        } catch (e: Exception) {
+            filePathCallback?.onReceiveValue(null)
+            filePathCallback = null
+        }
+    }
+
+    private fun launchImageChooser() {
+        try {
+            val dir = File(cacheDir, "camera_photos").also { it.mkdirs() }
+            val file = File.createTempFile("photo_", ".jpg", dir)
+            val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
+            cameraPhotoUri = uri
+
+            val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                .putExtra(MediaStore.EXTRA_OUTPUT, uri)
+            val galleryIntent = Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" }
+            val chooser = Intent.createChooser(galleryIntent, getString(R.string.select_image))
+                .putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(cameraIntent))
+
+            fileChooserLauncher.launch(chooser)
+        } catch (e: Exception) {
+            filePathCallback?.onReceiveValue(null)
+            filePathCallback = null
+        }
+    }
+
     // ── WebView Setup ──────────────────────────────────────────────────────────
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -435,8 +507,24 @@ class MainActivity : AppCompatActivity() {
                 filePathCallback: ValueCallback<Array<Uri>>,
                 fileChooserParams: FileChooserParams,
             ): Boolean {
-                filePathCallback.onReceiveValue(null)
-                return false
+                // Cancel any pending callback from a previously abandoned chooser
+                this@MainActivity.filePathCallback?.onReceiveValue(null)
+                this@MainActivity.filePathCallback = filePathCallback
+
+                if (fileChooserParams.isCaptureEnabled) {
+                    // Direct camera capture — request runtime permission if not yet granted
+                    if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA)
+                        == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        launchCameraCapture()
+                    } else {
+                        requestCameraPermission.launch(Manifest.permission.CAMERA)
+                    }
+                } else {
+                    // General file picker — offer camera + gallery chooser
+                    launchImageChooser()
+                }
+                return true
             }
         }
     }
