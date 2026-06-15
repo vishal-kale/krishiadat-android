@@ -15,8 +15,13 @@ import android.os.Bundle
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.MediaStore
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.util.Base64
 import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
@@ -180,6 +185,71 @@ class MainActivity : AppCompatActivity() {
     }
 
     inner class AndroidShareBridge {
+
+        // Fast path: receive HTML, render natively, share — no html2canvas roundtrip
+        @JavascriptInterface
+        fun shareHtml(html: String, cssWidthPx: Int, filename: String, title: String) {
+            runOnUiThread {
+                val density = resources.displayMetrics.density
+                val renderWidth = (cssWidthPx * minOf(density, 2.5f)).toInt()
+
+                val rootView = findViewById<ViewGroup>(R.id.container)
+                val container = FrameLayout(this@MainActivity)
+                container.visibility = View.INVISIBLE
+                rootView.addView(container, ViewGroup.LayoutParams(renderWidth, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                val renderView = WebView(this@MainActivity)
+                renderView.settings.javaScriptEnabled = true
+                container.addView(renderView, ViewGroup.LayoutParams(renderWidth, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                renderView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, url: String) {
+                        view.postDelayed({
+                            try {
+                                view.measure(
+                                    View.MeasureSpec.makeMeasureSpec(renderWidth, View.MeasureSpec.EXACTLY),
+                                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                                )
+                                view.layout(0, 0, renderWidth, view.measuredHeight)
+                                val height = maxOf(view.measuredHeight, 100)
+                                val bm = Bitmap.createBitmap(renderWidth, height, Bitmap.Config.ARGB_8888)
+                                val canvas = Canvas(bm)
+                                canvas.drawColor(Color.WHITE)
+                                view.draw(canvas)
+                                rootView.removeView(container)
+
+                                val dir = java.io.File(cacheDir, "shared_images").also { it.mkdirs() }
+                                val shareFile = java.io.File(dir, filename)
+                                shareFile.outputStream().use { bm.compress(Bitmap.CompressFormat.PNG, 85, it) }
+                                bm.recycle()
+
+                                val uri = FileProvider.getUriForFile(this@MainActivity, "${packageName}.fileprovider", shareFile)
+                                startActivity(
+                                    Intent.createChooser(
+                                        Intent(Intent.ACTION_SEND).apply {
+                                            type = "image/png"
+                                            putExtra(Intent.EXTRA_STREAM, uri)
+                                            putExtra(Intent.EXTRA_SUBJECT, title)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        },
+                                        title,
+                                    ),
+                                )
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                rootView.removeView(container)
+                            }
+                            // Dismiss the web-side loader
+                            webView.post {
+                                webView.evaluateJavascript("window.__ka_hideShareLoader?.()", null)
+                            }
+                        }, 450)
+                    }
+                }
+                renderView.loadDataWithBaseURL(APP_URL, html, "text/html", "UTF-8", null)
+            }
+        }
+
         @JavascriptInterface
         fun shareImage(base64Png: String, filename: String, title: String) {
             runOnUiThread {
@@ -224,7 +294,10 @@ class MainActivity : AppCompatActivity() {
 
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.container)) { view, windowInsets ->
             val bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            val ime  = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+            // When the keyboard is open, ime.bottom = keyboard height — use it so the
+            // WebView shrinks and the focused field stays visible above the keyboard.
+            view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
             WindowInsetsCompat.CONSUMED
         }
 
@@ -483,6 +556,22 @@ class MainActivity : AppCompatActivity() {
                 if (offlineView.visibility != View.VISIBLE) {
                     showWebView()
                 }
+                // Scroll focused input into view when the keyboard resizes the viewport
+                view.evaluateJavascript("""
+                    (function() {
+                        if (!window.__kaKeyboardListenerAdded && window.visualViewport) {
+                            window.__kaKeyboardListenerAdded = true;
+                            window.visualViewport.addEventListener('resize', function() {
+                                var el = document.activeElement;
+                                if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) {
+                                    setTimeout(function() {
+                                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    }, 100);
+                                }
+                            });
+                        }
+                    })();
+                """.trimIndent(), null)
             }
 
             override fun onReceivedError(
