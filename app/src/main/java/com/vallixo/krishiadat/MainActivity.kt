@@ -206,12 +206,13 @@ class MainActivity : AppCompatActivity() {
                     override fun onPageFinished(view: WebView, url: String) {
                         view.postDelayed({
                             try {
+                                val contentH = (view.contentHeight * view.scale).toInt()
+                                val height = maxOf(contentH, 100)
                                 view.measure(
                                     View.MeasureSpec.makeMeasureSpec(renderWidth, View.MeasureSpec.EXACTLY),
-                                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
                                 )
-                                view.layout(0, 0, renderWidth, view.measuredHeight)
-                                val height = maxOf(view.measuredHeight, 100)
+                                view.layout(0, 0, renderWidth, height)
                                 val bm = Bitmap.createBitmap(renderWidth, height, Bitmap.Config.ARGB_8888)
                                 val canvas = Canvas(bm)
                                 canvas.drawColor(Color.WHITE)
@@ -246,6 +247,8 @@ class MainActivity : AppCompatActivity() {
                         }, 450)
                     }
                 }
+                // Software layer required: hardware-accelerated WebView draws blank on a software Canvas
+                renderView.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                 renderView.loadDataWithBaseURL(APP_URL, html, "text/html", "UTF-8", null)
             }
         }
