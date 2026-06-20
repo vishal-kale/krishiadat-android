@@ -14,8 +14,9 @@ import android.os.Build
 import android.os.Bundle
 import android.print.PrintAttributes
 import android.print.PrintManager
-import android.provider.MediaStore
+import android.app.AlertDialog
 import android.graphics.Bitmap
+import android.provider.MediaStore
 import android.graphics.Canvas
 import android.graphics.Color
 import android.util.Base64
@@ -35,6 +36,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
@@ -84,13 +86,21 @@ class MainActivity : AppCompatActivity() {
         val cb = filePathCallback ?: return@registerForActivityResult
         filePathCallback = null
         if (result.resultCode == RESULT_OK) {
-            // Gallery selection returns data.data; camera (with EXTRA_OUTPUT) returns null data
+            // Camera capture (with EXTRA_OUTPUT) returns null data — use cameraPhotoUri
             val uri = result.data?.data ?: cameraPhotoUri
             cb.onReceiveValue(if (uri != null) arrayOf(uri) else null)
         } else {
             cb.onReceiveValue(null)
         }
         cameraPhotoUri = null
+    }
+
+    private val photoPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        val cb = filePathCallback ?: return@registerForActivityResult
+        filePathCallback = null
+        cb.onReceiveValue(if (uri != null) arrayOf(uri) else null)
     }
 
     // ── App Update ─────────────────────────────────────────────────────────────
@@ -161,7 +171,7 @@ class MainActivity : AppCompatActivity() {
 
     inner class AndroidPrintBridge {
         @JavascriptInterface
-        fun print(html: String) {
+        fun print(html: String, size: String = "a4") {
             runOnUiThread {
                 val printView = WebView(this@MainActivity)
                 printView.settings.javaScriptEnabled = true
@@ -170,8 +180,9 @@ class MainActivity : AppCompatActivity() {
                     override fun onPageFinished(view: WebView, url: String) {
                         val pm = getSystemService(Context.PRINT_SERVICE) as PrintManager
                         val adapter = view.createPrintDocumentAdapter("KrishiAdat Bill")
+                        val mediaSize = PrintAttributes.MediaSize.ISO_A4
                         val attrs = PrintAttributes.Builder()
-                            .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                            .setMediaSize(mediaSize)
                             .setResolution(
                                 PrintAttributes.Resolution("default", "Default", 300, 300),
                             )
@@ -204,7 +215,7 @@ class MainActivity : AppCompatActivity() {
 
                 renderView.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView, url: String) {
-                        view.postDelayed({
+                        fun captureAndShare() {
                             try {
                                 val contentH = (view.contentHeight * view.scale).toInt()
                                 val height = maxOf(contentH, 100)
@@ -244,7 +255,28 @@ class MainActivity : AppCompatActivity() {
                             webView.post {
                                 webView.evaluateJavascript("window.__ka_hideShareLoader?.()", null)
                             }
-                        }, 450)
+                        }
+
+                        fun waitAndCapture(attemptsLeft: Int) {
+                            view.evaluateJavascript("""
+                                (function() {
+                                    var imgs = document.querySelectorAll('img');
+                                    if (imgs.length === 0) return true;
+                                    return Array.from(imgs).every(function(img) {
+                                        return img.complete && img.naturalWidth > 0;
+                                    });
+                                })()
+                            """.trimIndent()) { result ->
+                                if (result == "true" || attemptsLeft <= 0) {
+                                    captureAndShare()
+                                } else {
+                                    view.postDelayed({ waitAndCapture(attemptsLeft - 1) }, 150)
+                                }
+                            }
+                        }
+
+                        // Initial settle delay, then poll until all <img> tags are loaded
+                        view.postDelayed({ waitAndCapture(15) }, 200)
                     }
                 }
                 // Software layer required: hardware-accelerated WebView draws blank on a software Canvas
@@ -494,23 +526,31 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchImageChooser() {
-        try {
-            val dir = File(cacheDir, "camera_photos").also { it.mkdirs() }
-            val file = File.createTempFile("photo_", ".jpg", dir)
-            val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
-            cameraPhotoUri = uri
-
-            val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-                .putExtra(MediaStore.EXTRA_OUTPUT, uri)
-            val galleryIntent = Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" }
-            val chooser = Intent.createChooser(galleryIntent, getString(R.string.select_image))
-                .putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(cameraIntent))
-
-            fileChooserLauncher.launch(chooser)
-        } catch (e: Exception) {
-            filePathCallback?.onReceiveValue(null)
-            filePathCallback = null
-        }
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.select_image))
+            .setItems(
+                arrayOf(getString(R.string.take_photo), getString(R.string.choose_from_gallery))
+            ) { _, which ->
+                when (which) {
+                    0 -> {
+                        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                            == PackageManager.PERMISSION_GRANTED
+                        ) {
+                            launchCameraCapture()
+                        } else {
+                            requestCameraPermission.launch(Manifest.permission.CAMERA)
+                        }
+                    }
+                    1 -> photoPickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                }
+            }
+            .setOnCancelListener {
+                filePathCallback?.onReceiveValue(null)
+                filePathCallback = null
+            }
+            .show()
     }
 
     // ── WebView Setup ──────────────────────────────────────────────────────────
