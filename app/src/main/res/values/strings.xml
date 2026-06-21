@@ -31,4 +31,9 @@
     <string name="select_image">Select Image</string>
     <string name="take_photo">Take Photo</string>
     <string name="choose_from_gallery">Choose from Gallery</string>
+
+    <!-- Play Integrity -->
+    <string name="integrity_title">Access Denied</string>
+    <string name="integrity_message">This app must be installed from Google Play. Please reinstall it through the official KrishiAdat Alpha link.</string>
+    <string name="integrity_exit">Exit</string>
 </resources>

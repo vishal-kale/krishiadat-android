@@ -22,6 +22,7 @@ import android.graphics.Color
 import android.util.Base64
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.FrameLayout
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
@@ -38,6 +39,8 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import com.google.android.play.core.integrity.IntegrityManagerFactory
+import com.google.android.play.core.integrity.IntegrityTokenRequest
 import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -47,9 +50,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory
 import com.google.android.play.core.appupdate.AppUpdateOptions
-import com.google.android.play.core.install.InstallStateUpdatedListener
 import com.google.android.play.core.install.model.AppUpdateType
-import com.google.android.play.core.install.model.InstallStatus
 import com.google.android.play.core.install.model.UpdateAvailability
 import java.io.File
 
@@ -109,12 +110,9 @@ class MainActivity : AppCompatActivity() {
 
     private val updateResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
-    ) { /* user can dismiss — flexible update continues in background */ }
-
-    private val installStateListener = InstallStateUpdatedListener { state ->
-        if (state.installStatus() == InstallStatus.DOWNLOADED) {
-            runOnUiThread { notifyUpdateDownloaded() }
-        }
+    ) { result ->
+        // IMMEDIATE update: if somehow dismissed (shouldn't happen), force re-check
+        if (result.resultCode != RESULT_OK) checkForUpdate()
     }
 
     companion object {
@@ -320,6 +318,7 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         setContentView(R.layout.activity_main)
 
         webView = findViewById(R.id.webView)
@@ -380,18 +379,16 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        appUpdateManager.registerListener(installStateListener)
-        // Show banner if update finished downloading while app was in background
+        // Resume an IMMEDIATE update that was interrupted (e.g. app backgrounded)
         appUpdateManager.appUpdateInfo.addOnSuccessListener { info ->
-            if (info.installStatus() == InstallStatus.DOWNLOADED) {
-                notifyUpdateDownloaded()
+            if (info.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
+                appUpdateManager.startUpdateFlowForResult(
+                    info,
+                    updateResultLauncher,
+                    AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build(),
+                )
             }
         }
-    }
-
-    override fun onPause() {
-        super.onPause()
-        appUpdateManager.unregisterListener(installStateListener)
     }
 
     override fun onDestroy() {
@@ -468,10 +465,61 @@ class MainActivity : AppCompatActivity() {
         } else if (isOnline()) {
             showLoading()
             val path = pendingDeepPath.also { pendingDeepPath = null }
-            loadApp(path)
+            checkPlayIntegrity { loadApp(path) }
         } else {
             showOffline()
         }
+    }
+
+    // ── Play Integrity ─────────────────────────────────────────────────────────
+
+    private fun checkPlayIntegrity(onPassed: () -> Unit) {
+        try {
+            val nonce = java.util.UUID.randomUUID().toString().replace("-", "") +
+                System.currentTimeMillis().toString()
+            val encodedNonce = android.util.Base64.encodeToString(
+                nonce.toByteArray(Charsets.UTF_8),
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP,
+            )
+            IntegrityManagerFactory.create(applicationContext)
+                .requestIntegrityToken(IntegrityTokenRequest.builder().setNonce(encodedNonce).build())
+                .addOnSuccessListener { response -> verifyIntegrityWithServer(response.token(), onPassed) }
+                .addOnFailureListener { onPassed() } // No Play services (dev/test) — allow through
+        } catch (e: Exception) {
+            onPassed()
+        }
+    }
+
+    private fun verifyIntegrityWithServer(token: String, onPassed: () -> Unit) {
+        Thread {
+            try {
+                val url = java.net.URL("$APP_URL/api/integrity/verify")
+                val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    setRequestProperty("Content-Type", "application/json")
+                    doOutput = true
+                    connectTimeout = 15_000
+                    readTimeout = 15_000
+                }
+                val escaped = token.replace("\\", "\\\\").replace("\"", "\\\"")
+                conn.outputStream.bufferedWriter().use { it.write("""{"token":"$escaped"}""") }
+                val passed = conn.responseCode == 200
+                conn.disconnect()
+                runOnUiThread { if (passed) onPassed() else showIntegrityFailedDialog() }
+            } catch (e: Exception) {
+                // Network error — don't block an already-authenticated user
+                runOnUiThread { onPassed() }
+            }
+        }.start()
+    }
+
+    private fun showIntegrityFailedDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.integrity_title))
+            .setMessage(getString(R.string.integrity_message))
+            .setPositiveButton(getString(R.string.integrity_exit)) { _, _ -> finish() }
+            .setCancelable(false)
+            .show()
     }
 
     // ── App Shortcuts ──────────────────────────────────────────────────────────
@@ -493,19 +541,15 @@ class MainActivity : AppCompatActivity() {
         appUpdateManager.appUpdateInfo
             .addOnSuccessListener { info ->
                 if (info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE &&
-                    info.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE)
+                    info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)
                 ) {
                     appUpdateManager.startUpdateFlowForResult(
                         info,
                         updateResultLauncher,
-                        AppUpdateOptions.newBuilder(AppUpdateType.FLEXIBLE).build(),
+                        AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build(),
                     )
                 }
             }
-    }
-
-    private fun notifyUpdateDownloaded() {
-        Toast.makeText(this, R.string.update_downloaded, Toast.LENGTH_LONG).show()
     }
 
     // ── Camera helpers ─────────────────────────────────────────────────────────
