@@ -116,7 +116,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val APP_URL = "https://krishiadat-web.vercel.app"
+        private const val APP_URL = "https://vallixo-agri-adat.vercel.app"
         private const val ACTION_NEW_BILL = "com.vallixo.krishiadat.ACTION_NEW_BILL"
         private const val ACTION_NEW_CREDIT = "com.vallixo.krishiadat.ACTION_NEW_CREDIT"
         private const val BACK_PRESS_INTERVAL = 2000L
