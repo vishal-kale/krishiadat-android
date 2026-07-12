@@ -539,7 +539,9 @@ class MainActivity : AppCompatActivity() {
                     readTimeout = 10_000
                 }
                 val escaped = token.replace("\\", "\\\\").replace("\"", "\\\"")
-                conn.outputStream.bufferedWriter().use { it.write("""{"token":"$escaped"}""") }
+                conn.outputStream.bufferedWriter().use {
+                    it.write("""{"token":"$escaped","packageName":"$packageName"}""")
+                }
                 val passed = conn.responseCode == 200
                 conn.disconnect()
                 runOnUiThread {
