@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">KrishiAdat</string>
+    <string name="app_name">BharatKrishiAdat</string>
     <string name="app_tagline">Trusted by farmers. Built for adat.</string>
     <string name="offline_title">No Internet Connection</string>
-    <string name="offline_subtitle">KrishiAdat needs internet to work.\nPlease check your connection and try again.</string>
+    <string name="offline_subtitle">BharatKrishiAdat needs internet to work.\nPlease check your connection and try again.</string>
     <string name="try_again">Try Again</string>
     <string name="press_back_to_exit">Press back again to exit</string>
     <string name="still_offline">Still no internet. Please check your connection.</string>
 
     <!-- Biometric lock -->
     <string name="biometric_subtitle">Verify your identity to continue</string>
-    <string name="biometric_hint">Use fingerprint, face, or device PIN to access KrishiAdat</string>
+    <string name="biometric_hint">Use fingerprint, face, or device PIN to access BharatKrishiAdat</string>
     <string name="biometric_cancel">Cancel</string>
     <string name="authenticate">Authenticate</string>
 
@@ -34,6 +34,6 @@
 
     <!-- Play Integrity -->
     <string name="integrity_title">Access Denied</string>
-    <string name="integrity_message">This app must be installed from Google Play. Please reinstall it through the official KrishiAdat Alpha link.</string>
+    <string name="integrity_message">This app must be installed from Google Play. Please reinstall it through the official BharatKrishiAdat link.</string>
     <string name="integrity_exit">Exit</string>
 </resources>
