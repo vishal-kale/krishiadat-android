@@ -121,6 +121,11 @@ class MainActivity : AppCompatActivity() {
         private const val ACTION_NEW_CREDIT = "com.vallixo.krishiadat.ACTION_NEW_CREDIT"
         private const val BACK_PRESS_INTERVAL = 2000L
 
+        private const val PREFS_NAME = "krishiadat_prefs"
+        private const val PREF_INTEGRITY_VERIFIED_AT = "integrity_verified_at"
+        private const val PREF_INTEGRITY_VERSION_CODE = "integrity_version_code"
+        private const val INTEGRITY_CACHE_DAYS = 30L
+
         // Survives rotation; resets when process is killed — re-auth on cold launch
         var isSessionAuthenticated = false
         var userHasLoggedIn = false
@@ -468,13 +473,39 @@ class MainActivity : AppCompatActivity() {
             // Start the WebView immediately; integrity check runs in parallel.
             // If integrity fails it calls finish() — user never interacts with the page.
             loadApp(path)
-            checkPlayIntegrity()
+            if (!isIntegrityVerifiedLocally()) checkPlayIntegrity()
         } else {
             showOffline()
         }
     }
 
     // ── Play Integrity ─────────────────────────────────────────────────────────
+
+    @Suppress("DEPRECATION")
+    private fun currentVersionCode(): Long =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+            packageManager.getPackageInfo(packageName, 0).longVersionCode
+        else
+            packageManager.getPackageInfo(packageName, 0).versionCode.toLong()
+
+    private fun isIntegrityVerifiedLocally(): Boolean {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val verifiedAt = prefs.getLong(PREF_INTEGRITY_VERIFIED_AT, 0L)
+        val cachedVersion = prefs.getLong(PREF_INTEGRITY_VERSION_CODE, -1L)
+        if (verifiedAt == 0L) return false
+        val ageMs = System.currentTimeMillis() - verifiedAt
+        val ageDays = ageMs / (1000L * 60 * 60 * 24)
+        return cachedVersion == currentVersionCode() && ageDays < INTEGRITY_CACHE_DAYS
+    }
+
+    private fun saveIntegrityVerified() {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putLong(PREF_INTEGRITY_VERIFIED_AT, System.currentTimeMillis())
+            .putLong(PREF_INTEGRITY_VERSION_CODE, currentVersionCode())
+            .apply()
+    }
+
+
 
     private fun checkPlayIntegrity() {
         try {
@@ -506,7 +537,9 @@ class MainActivity : AppCompatActivity() {
                 conn.outputStream.bufferedWriter().use { it.write("""{"token":"$escaped"}""") }
                 val passed = conn.responseCode == 200
                 conn.disconnect()
-                runOnUiThread { if (!passed) showIntegrityFailedDialog() }
+                runOnUiThread {
+                    if (passed) saveIntegrityVerified() else showIntegrityFailedDialog()
+                }
             } catch (_: Exception) {
                 // Network error — don't block an already-loading app
             }
