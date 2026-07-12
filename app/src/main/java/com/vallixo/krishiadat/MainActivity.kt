@@ -622,7 +622,15 @@ class MainActivity : AppCompatActivity() {
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                view.loadUrl(request.url.toString())
+                val url = request.url.toString()
+                if (!url.startsWith(APP_URL)) {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, request.url)
+                        startActivity(intent)
+                    } catch (_: Exception) { }
+                    return true
+                }
+                view.loadUrl(url)
                 return true
             }
 
