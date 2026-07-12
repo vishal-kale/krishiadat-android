@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.KrishiAdat" parent="Theme.AppCompat.NoActionBar">
+        <!-- White status bar background for Android 13 and below -->
+        <item name="android:statusBarColor">#FFFFFF</item>
+        <!-- Dark (black) icons so battery/time/signal are visible on white -->
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>
