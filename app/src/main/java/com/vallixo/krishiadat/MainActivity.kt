@@ -465,7 +465,10 @@ class MainActivity : AppCompatActivity() {
         } else if (isOnline()) {
             showLoading()
             val path = pendingDeepPath.also { pendingDeepPath = null }
-            checkPlayIntegrity { loadApp(path) }
+            // Start the WebView immediately; integrity check runs in parallel.
+            // If integrity fails it calls finish() — user never interacts with the page.
+            loadApp(path)
+            checkPlayIntegrity()
         } else {
             showOffline()
         }
@@ -473,7 +476,7 @@ class MainActivity : AppCompatActivity() {
 
     // ── Play Integrity ─────────────────────────────────────────────────────────
 
-    private fun checkPlayIntegrity(onPassed: () -> Unit) {
+    private fun checkPlayIntegrity() {
         try {
             val nonce = java.util.UUID.randomUUID().toString().replace("-", "") +
                 System.currentTimeMillis().toString()
@@ -483,14 +486,12 @@ class MainActivity : AppCompatActivity() {
             )
             IntegrityManagerFactory.create(applicationContext)
                 .requestIntegrityToken(IntegrityTokenRequest.builder().setNonce(encodedNonce).build())
-                .addOnSuccessListener { response -> verifyIntegrityWithServer(response.token(), onPassed) }
-                .addOnFailureListener { onPassed() } // No Play services (dev/test) — allow through
-        } catch (e: Exception) {
-            onPassed()
-        }
+                .addOnSuccessListener { response -> verifyIntegrityWithServer(response.token()) }
+                .addOnFailureListener { /* No Play services (dev/test) — allow through */ }
+        } catch (_: Exception) { /* allow through */ }
     }
 
-    private fun verifyIntegrityWithServer(token: String, onPassed: () -> Unit) {
+    private fun verifyIntegrityWithServer(token: String) {
         Thread {
             try {
                 val url = java.net.URL("$APP_URL/api/integrity/verify")
@@ -498,17 +499,16 @@ class MainActivity : AppCompatActivity() {
                     requestMethod = "POST"
                     setRequestProperty("Content-Type", "application/json")
                     doOutput = true
-                    connectTimeout = 15_000
-                    readTimeout = 15_000
+                    connectTimeout = 10_000
+                    readTimeout = 10_000
                 }
                 val escaped = token.replace("\\", "\\\\").replace("\"", "\\\"")
                 conn.outputStream.bufferedWriter().use { it.write("""{"token":"$escaped"}""") }
                 val passed = conn.responseCode == 200
                 conn.disconnect()
-                runOnUiThread { if (passed) onPassed() else showIntegrityFailedDialog() }
-            } catch (e: Exception) {
-                // Network error — don't block an already-authenticated user
-                runOnUiThread { onPassed() }
+                runOnUiThread { if (!passed) showIntegrityFailedDialog() }
+            } catch (_: Exception) {
+                // Network error — don't block an already-loading app
             }
         }.start()
     }
@@ -617,6 +617,7 @@ class MainActivity : AppCompatActivity() {
             userAgentString = userAgentString.replace("; wv", "")
         }
 
+        webView.setBackgroundColor(android.graphics.Color.WHITE)
         webView.addJavascriptInterface(AndroidPrintBridge(), "AndroidPrintBridge")
         webView.addJavascriptInterface(AndroidShareBridge(), "AndroidShareBridge")
 
