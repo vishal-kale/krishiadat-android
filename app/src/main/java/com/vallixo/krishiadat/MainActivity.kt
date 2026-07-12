@@ -326,6 +326,11 @@ class MainActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         setContentView(R.layout.activity_main)
 
+        // Status bar is transparent on Android 15+ (edge-to-edge enforced).
+        // App background is white, so force dark icons so battery/time/signal are visible.
+        ViewCompat.getWindowInsetsController(window.decorView)
+            ?.isAppearanceLightStatusBars = true
+
         webView = findViewById(R.id.webView)
         loadingView = findViewById(R.id.loadingView)
         offlineView = findViewById(R.id.offlineView)
